@@ -241,8 +241,50 @@ class CounterfactualCandidateGenerator:
             # Class
             if isinstance(concept, OWLClass):
                 self._remove_class(kb, concept, individual)
+            
+                # Existential restriction
+                # remove all r(x, yi) with K |= D(yi )
+            if isinstance(concept, OWLObjectSomeValuesFrom):
                 
-            if existential:
+                role_name = concept.get_property().get_iri()._remainder
+                role = concept.get_property()
+                role_object_list = [] # list of other individuals y with r(x,y)
+                for a_prop in props_list_names:
+                    for y in list(reasoner.object_property_values(
+                                    individual,
+                                    role)):
+                        role_object_list.append(y)
+                role_object_list = list(OrderedDict.fromkeys(role_object_list))
+
+                # Filler is Top concept (remove all r(x,y))
+                if concept.get_filler().is_owl_thing():
+                    for any_object in role_object_list:
+                        property_remove = OWLObjectPropertyAssertionAxiom( 
+                                        individual,                  
+                                        OWLObjectProperty(                 
+                                            IRI(self._namespace,
+                                                f'{a_prop}')), 
+                                        an_object)                                 
+                        self._manager_editing.remove_axiom(onto, 
+                                                            property_remove)
+
+                # Filler is any other Concept D (remove only r(x,y) with D(y))
+                else:
+                    role_objects_in_restriction_concept = [] # y with D(y)
+                    for an_object in role_object_list:
+                        if an_object in list(reasoner_sub.instances(
+                                        concept.get_filler())):
+                            role_objects_in_restriction_concept.append(an_object)
+                    # Removing
+                    for relevant_object in role_objects_in_restriction_concept:
+                        property_remove = OWLObjectPropertyAssertionAxiom(
+                                            individual,
+                                            role,
+                                            relevant_object)
+                        self._manager_editing.remove_axiom(onto,
+                                                            property_remove)
+            
+                
                 # do thing
             if universal:
                 # do thing
@@ -251,7 +293,7 @@ class CounterfactualCandidateGenerator:
         
         
         
-        '''       
+'''       
         
         
         
@@ -483,7 +525,7 @@ class CounterfactualCandidateGenerator:
             if individual == self._individual:
                 self._change_count = self._change_count+1
    
-    '''            
+'''            
             
     def generate_candidates(self):
 
