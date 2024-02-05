@@ -64,10 +64,6 @@ class CounterfactualCandidateGenerator:
         self.onto = KnowledgeBase(path=self._data_file).ontology()
         #self._manager = self.onto.get_owl_ontology_manager()
         
-        
-        # Load reasoner    
-        reasoner = OWLReasoner_Owlready2_ComplexCEInstances(self.onto, infer_property_values = False, isolate = False)
-        
     def __repr__(self):
         return (f"CounterfactualCandidateGenerator('{self.concept}', "
                 + f"{self._data_file}, {self._individual}, "
@@ -160,7 +156,13 @@ class CounterfactualCandidateGenerator:
         
         # Subclasses of removed classes are not counted
         
-    def _make_hold(self, kb, concept, individual, reasoner, reasoner_sub):
+    def _make_hold(self, data_file, concept, individual):
+        
+        # Load reasoner    
+        reasoner = OWLReasoner_Owlready2_ComplexCEInstances(
+            KnowledgeBase(path=data_file).ontology(), 
+            infer_property_values = False, 
+            isolate = False)
         
         # Apply rewriting
         
@@ -169,7 +171,7 @@ class CounterfactualCandidateGenerator:
         #For clause in CC do
         for sub_list in self._concept_as_list: # "for clause in CC do"
                      
-            kb = KnowledgeBase(path=self._data_file) # "K' ← copy(K)"
+            kb = KnowledgeBase(path=data_file) # "K' ← copy(K)"
             self._manager = kb.ontology().get_owl_ontology_manager()
             
             if type(sub_list) != list:
@@ -285,10 +287,28 @@ class CounterfactualCandidateGenerator:
                                                             property_remove)
             
                 
-                # do thing
             if universal:
-                # do thing
-        
+                # add y, add r(x',y), hold(K, y, ¬D)
+                if isinstance(concept, OWLObjectAllValuesFrom):
+                
+                    a_prop = concept._property
+                    a_filler = concept._filler
+                    placeholder_individual = OWLNamedIndividual(IRI(self._namespace, 
+                        f'PH{self._placeholder_count}'))
+                    property_add = OWLObjectPropertyAssertionAxiom(individual, 
+                        a_prop, placeholder_individual)
+                    self._manager_editing.add_axiom(onto, property_add) # Ontolearn creates the individual y automatically
+                    self._placeholder_count = self._placeholder_count+1
+                    
+                    # the changed KB has to be saved and read again
+                    # because of an unfixed issue in owlapy
+                    if (os.path.exists('file:/temporary_kb_storage.owl')):
+                        os.remove('file:/temporary_kb_storage.owl')
+                    self._manager_editing.save_ontology(
+                        onto, IRI.create('file:/temporary_kb_storage.owl'))
+                    data_file_new = os.path.join(os.getcwd(), 'temporary_kb_storage.owl')
+                    
+                    self._make_hold(data_file_new, a_filler, placeholder_individual)       
         
         
         
@@ -412,118 +432,12 @@ class CounterfactualCandidateGenerator:
             to_add = concept.get_operand()
             self._add_class(kb, to_add, individual, reasoner, reasoner_sub)
 
-        # Existential restriction
-        # remove all statements r'(x',a) with r⊑r' and A(a)
-        elif isinstance(concept, OWLObjectSomeValuesFrom):
-            role_name = concept.get_property().get_iri()._remainder
-            role = OWLObjectProperty(IRI(self._namespace, f'{role_name}'))
 
-            props_list = list(reasoner.sub_object_properties(role))
-            props_list.append(role)
-            props_list_names = []
-
-            for g in props_list:
-                props_list_names.append(g.get_iri()._remainder)
-            role_object_list = []
-            for a_prop in props_list_names:
-                for y in list(reasoner.object_property_values(
-                                individual,
-                                OWLObjectProperty(
-                                    IRI(self._namespace, f'{a_prop}')))):
-                    role_object_list.append(y)
-            role_object_list = list(OrderedDict.fromkeys(role_object_list))
-
-            # Object is Thing
-            if concept.get_filler().is_owl_thing():
-                # Counting
-                for a_prop in props_list_names:
-                    for an_object in role_object_list:
-                        if an_object in list(reasoner.object_property_values(
-                                        individual,
-                                        OWLObjectProperty(
-                                            IRI(self._namespace, f'{a_prop}')))):
-                            if individual == self._individual:
-                                self._change_count = self._change_count+1
-                # Removing
-                for a_prop in props_list_names:
-                    for an_object in role_object_list:
-                        property_remove = OWLObjectPropertyAssertionAxiom( # axiom
-                                        individual,                  # individual
-                                        OWLObjectProperty(                 # OWLproperty
-                                            IRI(self._namespace,
-                                                f'{a_prop}')), 
-                                        an_object)                                 # object
-                        self._manager_editing.remove_axiom(onto, 
-                                                            property_remove)
-
-            # Object is Class
-            else:
-                role_objects_in_restriction_concept = []
-                for an_object in role_object_list:
-                    if an_object in list(reasoner_sub.instances(
-                                    concept.get_filler())):
-                        role_objects_in_restriction_concept.append(an_object)
-                # Counting
-                for a_prop in props_list_names:
-                    for an_object in role_objects_in_restriction_concept:
-                        if an_object in list(reasoner.object_property_values(
-                                        individual,
-                                        OWLObjectProperty(
-                                            IRI(self._namespace, f'{a_prop}')))):
-                            if individual == self._individual:
-                                self._change_count = self._change_count+1
-                # Removing
-                for a_prop in props_list_names:
-                    for relevant_object in role_objects_in_restriction_concept:
-                        property_remove = OWLObjectPropertyAssertionAxiom(
-                                            individual,
-                                            OWLObjectProperty(
-                                                IRI(self._namespace, f'{a_prop}')),
-                                            relevant_object)
-                        self._manager_editing.remove_axiom(onto,
-                                                            property_remove)
         
         # Universal Restriction
-        # add a, add r(x',a), nothold(K',a,A)
-        if isinstance(concept, OWLObjectAllValuesFrom):
         
-            a_prop = concept._property
-            a_filler = concept._filler
-            placeholder_individual = OWLNamedIndividual(IRI(self._namespace, 
-                f'PH{self._placeholder_count}'))
-            property_add = OWLObjectPropertyAssertionAxiom(individual, 
-                a_prop, placeholder_individual)
-            self._manager_editing.add_axiom(onto, property_add)
-            self._placeholder_count = self._placeholder_count+1
             
-            # the changed KB has to be saved and read again
-            # because of an unfixed issue in owlapy
-            if (os.path.exists('file:/temporary_kb_storage.owl')):
-                os.remove('file:/temporary_kb_storage.owl')
-            self._manager_editing.save_ontology(
-                onto, IRI.create('file:/temporary_kb_storage.owl'))
-            data_file_new = os.path.join(os.getcwd(), 'temporary_kb_storage.owl')
-            
-            # create new reasoners for the changed KB
-            manager_reasoning_new = OWLOntologyManager_Owlready2()            
-            base_onto_new = manager_reasoning_new.load_ontology(
-                                IRI.create(data_file_new))
-            base_reasoner_new = OWLReasoner_Owlready2(base_onto_new)
-            reasoner_new = OWLReasoner_FastInstanceChecker(
-                                base_onto_new,
-                                base_reasoner_new,
-                                negation_default=True,
-                                sub_properties=False)
-            reasoner_sub_new = OWLReasoner_FastInstanceChecker(
-                                    base_onto_new,
-                                    base_reasoner_new,
-                                    negation_default=True,
-                                    sub_properties=True)
-            
-            self._make_not_hold(kb, a_filler, placeholder_individual, reasoner_new, reasoner_sub_new)
-            # Counting
-            if individual == self._individual:
-                self._change_count = self._change_count+1
+           
    
 '''            
             
@@ -535,7 +449,7 @@ class CounterfactualCandidateGenerator:
         self.kb_dict = {}
         
         if self._goal_is_hold:            
-            self._make_hold(kb, self._concept_as_list, self._individual, self.kb_dict, self.restrictions)
+            self._make_hold(self._data_file, self._concept_as_list, self._individual, self.kb_dict, self.restrictions)
         
 
         
