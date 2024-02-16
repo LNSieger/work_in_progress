@@ -72,7 +72,7 @@ class CounterfactualCandidateGenerator:
     def _create_list(self):
         '''
         - Brings concept to TLDNF/TLCNF
-        - Creates list of lists of clauses of the concept to work with
+        - Creates list of lists of clauses/terms of the concept to work with
         '''
         
         if self._goal_is_hold:       
@@ -168,8 +168,8 @@ class CounterfactualCandidateGenerator:
         
         # Bring to tldnf
         
-        #For clause in CC do
-        for sub_list in self._concept_as_list: # "for clause in CC do"
+        #For term in CC do
+        for sub_list in self._concept_as_list: # "for term in CC do"
                      
             kb = KnowledgeBase(path=data_file) # "K' ← copy(K)"
             self._manager = kb.ontology().get_owl_ontology_manager()
@@ -177,9 +177,9 @@ class CounterfactualCandidateGenerator:
             if type(sub_list) != list:
                 sub_list = [sub_list]
                 
-            for concept_part in sub_list: # "for C in clause do"
+            for concept_part in sub_list: # "for C in term do"
                 
-                if individual in reasoner.instances(concept, direct=False):
+                if individual not in reasoner.instances(concept, direct=False): # Note: update to new method
                     self.positive(kb, concept, individual)
                     
             reasoner_result = OWLReasoner_Owlready2_ComplexCEInstances(kb.ontology(), infer_property_values = True, isolate = False)
@@ -204,6 +204,107 @@ class CounterfactualCandidateGenerator:
                     "concept_part": str(sub_list),
                     "change_count": f'{self._change_count}'}
                 kb_count = kb_count+1
+                
+        def _make_not_hold(self, data_file, concept, individual):
+            
+            # Load reasoner    
+            reasoner = OWLReasoner_Owlready2_ComplexCEInstances(
+                KnowledgeBase(path=data_file).ontology(), 
+                infer_property_values = False, 
+                isolate = False)
+            
+            # Apply rewriting
+            
+            # Bring to tlcnf
+            
+            #For clause in CC do
+            for sub_list in self._concept_as_list: # "for clause in CC do"
+                         
+                kb = KnowledgeBase(path=data_file) # "K' ← copy(K)"
+                self._manager = kb.ontology().get_owl_ontology_manager()
+                
+                if type(sub_list) != list:
+                    sub_list = [sub_list]
+                    
+                for concept_part in sub_list: # "for C in clause do"
+                    
+                    if individual in reasoner.instances(concept, direct=False): # Note: update to new method
+                        self.negative(kb, concept, individual)
+                        
+                reasoner_result = OWLReasoner_Owlready2_ComplexCEInstances(kb.ontology(), infer_property_values = True, isolate = False)
+                if self._individual not in reasoner_result.instances(self._concept):
+                    self.kb_dict[str(sub_list)] = kb
+
+                # Save ontology file
+                    if self._saving:
+                        if (os.path.exists(
+                                f"/{os.getcwd()}/Candidate{kb_count}.owl"
+                                )):
+                            os.remove(
+                                f"/{os.getcwd()}/Candidate{kb_count}.owl")
+                        self._manager_editing.save_ontology(
+                            kb.ontology(),
+                            IRI.create(f'file:/Candidate{kb_count}.owl'))
+        
+                    print(f"Candidate {kb_count} was created with "
+                          + f"{self._change_count} axiom changes.\n"
+                           f"The concept part was {str(sub_list)}.")
+                    self.candidate_dict[f'Candidate{kb_count}'] = {
+                        "concept_part": str(sub_list),
+                        "change_count": f'{self._change_count}'}
+                    kb_count = kb_count+1
+                    
+    def _positive(kb, concept, individual):
+              
+        # handle restrictions if they exist - "c ∈ R"
+        if self.restrictions != None:
+            if isinstance(concept_part, OWLObjectComplementOf):
+                check_if_restricted = concept_part.get_operand()
+            else:
+                check_if_restricted = concept_part
+            if isinstance(check_if_restricted, OWLClass):
+                if check_if_restricted in self.restrictions:
+                    print("Restricted feature must not be changed.")
+                    self._change_count = float('inf')            
+                    continue
+            elif isinstance(check_if_restricted, 
+                          OWLObjectSomeValuesFrom)\
+            or isinstance(check_if_restricted, 
+                          OWLObjectAllValuesFrom):
+                if check_if_restricted.get_property()\
+                in self.restrictions:
+                    self._change_count = float('inf')            
+                    continue
+            else:
+                pass   
+            
+        # handle bottom concept
+        elif class_concept.is_owl_nothing():
+            print("Individual that is 'Nothing' can not exist.")
+            self._change_count = float('inf')
+            
+        else:
+            # other possibilities
+        
+
+#        3: else if C is a negated concept then
+#        4:
+#        negative(K, ¬C, x, P )
+#        5: end if
+#        6: if C = ∃r.D then
+#        7:
+#        add y, add r(x, y), hold (K, y, D, KBs, P ).
+#        8: else if C = ∀r.D then
+#        9:
+#        remove all r(x, yi ) with K |= ¬D(yi )(i ≥ 0).
+#        10: else
+#        11:
+#        add C(x)
+#       12: end if
+#       13: if ¬C(x) ∈ A then
+#       14:
+#        remove ¬C(x)
+#        15: end if
 
     def _negative(kb, concept, individual):
       
