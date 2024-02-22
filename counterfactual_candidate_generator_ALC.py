@@ -30,22 +30,20 @@ class CounterfactualCandidateGenerator:
             False if goal is to make the concept not hold for the individual
         saving: set True to save the resulting changed KnowledgeBases
             containing the counterfactuals as .owl ontology files
-        restrictions: features that must not be changed. Provide as list of
+        protected: features that must not be changed. Provide as list of
         OWLClasses and OWLObjectProperties
     
     
     __slots__ = '_concept', '_data_file', '_individual', '_namespace',\
-        '_saving', '_goal_is_hold', 'restrictions', '_placeholder_count', \
+        '_saving', '_goal_is_hold', 'protected', '_placeholder_count', \
         '_concept_TLDNF', '_concept_TLCNF', '_concept_as_list'\
         'candidate_dict', 'kb_dict', '_change_count', '_manager,\
         '_base_onto', '_base_reasoner', '_reasoner'
-    
-    restrictions: list
     '''
     
     def __init__(self, concept, data_file, individual,
                  namespace: str, goal_is_hold: bool = True, 
-                 saving: bool = True, restrictions: list = None):
+                 saving: bool = True, protected: list = None):
 
         self._concept = NNF().get_class_nnf(concept)
         self._data_file = data_file
@@ -54,13 +52,12 @@ class CounterfactualCandidateGenerator:
         self._saving = saving
         self._placeholder_count = 0
         self._goal_is_hold = goal_is_hold
-        self.restrictions = restrictions
+        self.protected = protected
         self._concept_TLDNF = None
         self._concept_TLCNF = None
         self._concept_as_list = None
         self.candidate_dict = None
         self.kb_dict = None
-        self._change_count = None
         self.onto = KnowledgeBase(path=self._data_file).ontology()
         #self._manager = self.onto.get_owl_ontology_manager()
         
@@ -197,12 +194,10 @@ class CounterfactualCandidateGenerator:
                         kb.ontology(),
                         IRI.create(f'file:/Candidate{kb_count}.owl'))
     
-                print(f"Candidate {kb_count} was created with "
-                      + f"{self._change_count} axiom changes.\n"
+                print(f"Candidate {kb_count} was created. \n"
                        f"The concept part was {str(sub_list)}.")
                 self.candidate_dict[f'Candidate{kb_count}'] = {
-                    "concept_part": str(sub_list),
-                    "change_count": f'{self._change_count}'}
+                    "concept_part": str(sub_list)}
                 kb_count = kb_count+1
                 
         def _make_not_hold(self, data_file, concept, individual):
@@ -246,52 +241,35 @@ class CounterfactualCandidateGenerator:
                             kb.ontology(),
                             IRI.create(f'file:/Candidate{kb_count}.owl'))
         
-                    print(f"Candidate {kb_count} was created with "
-                          + f"{self._change_count} axiom changes.\n"
+                    print(f"Candidate {kb_count} was created. \n"
                            f"The concept part was {str(sub_list)}.")
                     self.candidate_dict[f'Candidate{kb_count}'] = {
-                        "concept_part": str(sub_list),
-                        "change_count": f'{self._change_count}'}
+                        "concept_part": str(sub_list)}
                     kb_count = kb_count+1
                     
     def _positive(kb, concept, individual):
               
-        # handle restrictions if they exist - "c ∈ R"
-        if self.restrictions != None:
-            if isinstance(concept_part, OWLObjectComplementOf):
-                check_if_restricted = concept_part.get_operand()
-            else:
-                check_if_restricted = concept_part
-            if isinstance(check_if_restricted, OWLClass):
-                if check_if_restricted in self.restrictions:
-                    print("Restricted feature must not be changed.")
-                    self._change_count = float('inf')            
-                    continue
-            elif isinstance(check_if_restricted, 
-                          OWLObjectSomeValuesFrom)\
-            or isinstance(check_if_restricted, 
-                          OWLObjectAllValuesFrom):
-                if check_if_restricted.get_property()\
-                in self.restrictions:
-                    self._change_count = float('inf')            
-                    continue
-            else:
-                pass   
+        # handle protected
+        if individual == self._individual:
+            # if feature is protected, abort
+            if self.check_protection(kb, concept, individual):
+                return
             
         # handle bottom concept
         elif class_concept.is_owl_nothing():
             print("Individual that is 'Nothing' can not exist.")
-            self._change_count = float('inf')
-            
-        else:
-            # other possibilities
+            return
         
+        # Complement of Class
+        elif isinstance(concept, OWLObjectComplementOf):
+            to_negative = concept.get_operand()
+            self._negative(kb, to_negative, individual)    
+        
+        # if C = ∃r.D
+        if isinstance(concept, OWLObjectSomeValuesFrom):
+            self.add_object(kb, concept, individual, holds = True)
 
-#        3: else if C is a negated concept then
-#        4:
-#        negative(K, ¬C, x, P )
-#        5: end if
-#        6: if C = ∃r.D then
+#        
 #        7:
 #        add y, add r(x, y), hold (K, y, D, KBs, P ).
 #        8: else if C = ∀r.D then
@@ -308,32 +286,16 @@ class CounterfactualCandidateGenerator:
 
     def _negative(kb, concept, individual):
       
-        # handle restrictions if they exist - "c ∈ R"
-        if self.restrictions != None:
-            if isinstance(concept_part, OWLObjectComplementOf):
-                check_if_restricted = concept_part.get_operand()
-            else:
-                check_if_restricted = concept_part
-            if isinstance(check_if_restricted, OWLClass):
-                if check_if_restricted in self.restrictions:
-                    print("Restricted feature must not be changed.")
-                    self._change_count = float('inf')            
-                    continue
-            elif isinstance(check_if_restricted, 
-                          OWLObjectSomeValuesFrom)\
-            or isinstance(check_if_restricted, 
-                          OWLObjectAllValuesFrom):
-                if check_if_restricted.get_property()\
-                in self.restrictions:
-                    self._change_count = float('inf')            
-                    continue
-            else:
-                pass    
+        # handle protected
+        if individual == self._individual:
+            # if feature is protected, abort
+            if self.check_protection(kb, concept, individual):
+                return 
             
         # handle top concept
         elif class_concept.is_owl_thing():
             print("Individual that is not 'Thing' can not exist.")
-            self._change_count = float('inf')
+            return
             
         # Complement of Class
         elif isinstance(concept, OWLObjectComplementOf):
@@ -388,31 +350,58 @@ class CounterfactualCandidateGenerator:
                                                             property_remove)
             
                 
-            if universal:
-                # add y, add r(x',y), hold(K, y, ¬D)
-                if isinstance(concept, OWLObjectAllValuesFrom):
-                
-                    a_prop = concept._property
-                    a_filler = concept._filler
-                    placeholder_individual = OWLNamedIndividual(IRI(self._namespace, 
-                        f'PH{self._placeholder_count}'))
-                    property_add = OWLObjectPropertyAssertionAxiom(individual, 
-                        a_prop, placeholder_individual)
-                    self._manager_editing.add_axiom(onto, property_add) # Ontolearn creates the individual y automatically
-                    self._placeholder_count = self._placeholder_count+1
-                    
-                    # the changed KB has to be saved and read again
-                    # because of an unfixed issue in owlapy
-                    if (os.path.exists('file:/temporary_kb_storage.owl')):
-                        os.remove('file:/temporary_kb_storage.owl')
-                    self._manager_editing.save_ontology(
-                        onto, IRI.create('file:/temporary_kb_storage.owl'))
-                    data_file_new = os.path.join(os.getcwd(), 'temporary_kb_storage.owl')
-                    
-                    self._make_hold(data_file_new, a_filler, placeholder_individual)       
+
+            # add y, add r(x',y), hold(K, y, ¬D)
+            if isinstance(concept, OWLObjectAllValuesFrom):
+                self.add_object(kb, concept, individual, holds = False)
+            
+            
+    def add_object(kb, concept, individual, holds: bool = True):
+        a_prop = concept._property
+        a_filler = concept._filler
+        placeholder_individual = OWLNamedIndividual(IRI(self._namespace, 
+            f'PH{self._placeholder_count}'))
+        property_add = OWLObjectPropertyAssertionAxiom(individual, 
+            a_prop, placeholder_individual)
+        self._manager_editing.add_axiom(onto, property_add) # Ontolearn creates the individual y automatically
+        self._placeholder_count = self._placeholder_count+1
         
+        # the changed KB has to be saved and read again
+        # because of an unfixed issue in owlapy
+        if (os.path.exists('file:/temporary_kb_storage.owl')):
+            os.remove('file:/temporary_kb_storage.owl')
+        self._manager_editing.save_ontology(
+            onto, IRI.create('file:/temporary_kb_storage.owl'))
+        data_file_new = os.path.join(os.getcwd(), 'temporary_kb_storage.owl')
         
-        
+        if holds:
+            # for method "negative"
+            self._make_hold(data_file_new, a_filler, placeholder_individual)
+        else:
+            # for method "positive"
+            self._make_hold(data_file_new, OWLObjectComplementOf(a_filler), placeholder_individual)
+            
+    def check_protection(kb, concept, individual):
+        if self.protected != None:
+            if isinstance(concept_part, OWLObjectComplementOf):
+                check_if_protected = concept_part.get_operand()
+            else:
+                check_if_protected = concept_part
+            if isinstance(check_if_protected, OWLClass):
+                if check_if_protected in self.protected:
+                    print("protected feature must not be changed.")           
+                    return True
+            elif isinstance(check_if_protected, 
+                          OWLObjectSomeValuesFrom)\
+            or isinstance(check_if_protected, 
+                          OWLObjectAllValuesFrom):
+                if check_if_protected.get_property()\
+                in self.protected:          
+                    print("protected property must not be changed.")           
+                    return True
+            else:
+                return False   
+         
         
 '''       
         
@@ -550,7 +539,7 @@ class CounterfactualCandidateGenerator:
         self.kb_dict = {}
         
         if self._goal_is_hold:            
-            self._make_hold(self._data_file, self._concept_as_list, self._individual, self.kb_dict, self.restrictions)
+            self._make_hold(self._data_file, self._concept_as_list, self._individual, self.kb_dict, self.protected)
         
 
         
